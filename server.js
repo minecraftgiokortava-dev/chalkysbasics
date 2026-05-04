@@ -124,6 +124,11 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    if (message.type === "catch") {
+      handleCatch(client, message);
+      return;
+    }
+
     send(socket, { type: "error", message: `Unsupported message type: ${message.type}` });
   });
 
@@ -200,6 +205,34 @@ function handleState(client, message) {
   }
 
   broadcastState(room);
+}
+
+function handleCatch(client, message) {
+  if (!client.roomId || !client.role) {
+    send(client.socket, { type: "error", message: "Join a room before sending catch events." });
+    return;
+  }
+
+  if (client.role !== "chalky") {
+    send(client.socket, { type: "error", message: "Only Chalky can catch the kid." });
+    return;
+  }
+
+  const room = rooms.get(client.roomId);
+  if (!room) {
+    return;
+  }
+
+  const payload = {
+    type: "caught",
+    room: client.roomId,
+    by: client.role,
+    caughtRole: "sphere",
+  };
+
+  for (const player of room.players) {
+    send(player.socket, payload);
+  }
 }
 
 function broadcastState(room) {
