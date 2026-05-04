@@ -162,7 +162,11 @@ function handleJoin(client, message) {
   }
 
   const reservation = takeReservation(room, message.reservationId);
-  const role = reservation ? reservation.role : findAvailableRole(room);
+  const preferredRole = normalizeRole(message.preferredRole);
+  const role =
+    (preferredRole && isRoleAvailable(room, preferredRole) ? preferredRole : null) ||
+    (reservation ? reservation.role : null) ||
+    findAvailableRole(room);
   if (!role) {
     send(client.socket, {
       type: "error",
@@ -312,6 +316,27 @@ function findAvailableRole(room) {
   return null;
 }
 
+function isRoleAvailable(room, role) {
+  if (!room || !role) {
+    return false;
+  }
+
+  cleanupRoom(room);
+  for (const player of room.players) {
+    if (player.role === role) {
+      return false;
+    }
+  }
+
+  for (const reservation of room.reservations) {
+    if (reservation.role === role) {
+      return false;
+    }
+  }
+
+  return ROLE_ORDER.includes(role);
+}
+
 function reserveSlot(message) {
   const roomId = normalizeRoomId(message && message.room);
   const room = getOrCreateRoom(roomId);
@@ -388,6 +413,11 @@ function normalizeRoomId(value) {
 
   normalized = normalized.replace(/^-+|-+$/g, "");
   return normalized || "chalky-test";
+}
+
+function normalizeRole(value) {
+  const role = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ROLE_ORDER.includes(role) ? role : null;
 }
 
 function numberOrZero(value) {
