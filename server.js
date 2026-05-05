@@ -134,6 +134,11 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    if (message.type === "csodaPush") {
+      handleCsodaPush(client, message);
+      return;
+    }
+
     send(socket, { type: "error", message: `Unsupported message type: ${message.type}` });
   });
 
@@ -224,6 +229,11 @@ function handleState(client, message) {
     room.principalState = null;
   }
 
+  if (client.role === "sphere") {
+    room.kidNotebookCount = numberOrZero(message.kidNotebookCount);
+    room.kidNotebookTotal = numberOrZero(message.kidNotebookTotal);
+  }
+
   broadcastState(room);
 }
 
@@ -248,6 +258,36 @@ function handlePickup(client, message) {
   broadcastState(room);
 }
 
+function handleCsodaPush(client, message) {
+  if (!client.roomId || !client.role) {
+    send(client.socket, { type: "error", message: "Join a room before sending csoda push events." });
+    return;
+  }
+
+  if (client.role !== "sphere") {
+    send(client.socket, { type: "error", message: "Only the kid can send csoda push events." });
+    return;
+  }
+
+  const room = rooms.get(client.roomId);
+  if (!room) {
+    return;
+  }
+
+  const payload = {
+    type: "csodaPush",
+    directionX: numberOrZero(message.directionX),
+    directionY: numberOrZero(message.directionY),
+    directionZ: numberOrZero(message.directionZ),
+    distance: Math.max(0, numberOrZero(message.distance)),
+    duration: Math.max(0.05, numberOrZero(message.duration)),
+  };
+
+  for (const player of room.players) {
+    send(player.socket, payload);
+  }
+}
+
 function handleCatch(client, message) {
   if (!client.roomId || !client.role) {
     send(client.socket, { type: "error", message: "Join a room before sending catch events." });
@@ -267,6 +307,8 @@ function handleCatch(client, message) {
   cleanupRoom(room);
   room.collectedPickups.clear();
   room.principalState = null;
+  room.kidNotebookCount = 0;
+  room.kidNotebookTotal = 0;
   room.reservations = [];
 
   for (const player of room.players) {
@@ -303,6 +345,8 @@ function broadcastState(room) {
     principalY: room.principalState ? room.principalState.y : 0,
     principalZ: room.principalState ? room.principalState.z : 0,
     principalYaw: room.principalState ? room.principalState.yaw : 0,
+    kidNotebookCount: room.kidNotebookCount || 0,
+    kidNotebookTotal: room.kidNotebookTotal || 0,
   };
 
   for (const player of room.players) {
@@ -341,6 +385,8 @@ function getOrCreateRoom(roomId) {
       reservations: [],
       collectedPickups: new Set(),
       principalState: null,
+      kidNotebookCount: 0,
+      kidNotebookTotal: 0,
     });
   }
 
