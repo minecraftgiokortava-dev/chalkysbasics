@@ -129,6 +129,11 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    if (message.type === "pickup") {
+      handlePickup(client, message);
+      return;
+    }
+
     send(socket, { type: "error", message: `Unsupported message type: ${message.type}` });
   });
 
@@ -208,6 +213,38 @@ function handleState(client, message) {
     return;
   }
 
+  if (client.role === "sphere" && message.hasPrincipalState) {
+    room.principalState = {
+      x: numberOrZero(message.principalX),
+      y: numberOrZero(message.principalY),
+      z: numberOrZero(message.principalZ),
+      yaw: numberOrZero(message.principalYaw),
+    };
+  } else if (client.role === "sphere") {
+    room.principalState = null;
+  }
+
+  broadcastState(room);
+}
+
+function handlePickup(client, message) {
+  if (!client.roomId || !client.role) {
+    send(client.socket, { type: "error", message: "Join a room before sending pickup events." });
+    return;
+  }
+
+  const room = rooms.get(client.roomId);
+  if (!room) {
+    return;
+  }
+
+  const pickupId = typeof message.pickupId === "string" ? message.pickupId.trim() : "";
+  if (!pickupId) {
+    send(client.socket, { type: "error", message: "Missing pickup id." });
+    return;
+  }
+
+  room.collectedPickups.add(pickupId);
   broadcastState(room);
 }
 
@@ -227,15 +264,22 @@ function handleCatch(client, message) {
     return;
   }
 
-  const payload = {
-    type: "caught",
-    room: client.roomId,
-    by: client.role,
-    caughtRole: "sphere",
-  };
+  cleanupRoom(room);
+  room.collectedPickups.clear();
+  room.principalState = null;
+  room.reservations = [];
 
   for (const player of room.players) {
-    send(player.socket, payload);
+    const nextRole = player.role === "chalky" ? "sphere" : "chalky";
+    const reservationId = createReservation(room, nextRole);
+    send(player.socket, {
+      type: "caught",
+      room: client.roomId,
+      by: client.role,
+      caughtRole: "sphere",
+      nextRole,
+      reservationId,
+    });
   }
 }
 
@@ -253,6 +297,12 @@ function broadcastState(room) {
       z: player.state.z,
       yaw: player.state.yaw,
     })),
+    collectedPickups: Array.from(room.collectedPickups),
+    hasPrincipalState: !!room.principalState,
+    principalX: room.principalState ? room.principalState.x : 0,
+    principalY: room.principalState ? room.principalState.y : 0,
+    principalZ: room.principalState ? room.principalState.z : 0,
+    principalYaw: room.principalState ? room.principalState.yaw : 0,
   };
 
   for (const player of room.players) {
@@ -289,6 +339,8 @@ function getOrCreateRoom(roomId) {
       roomId,
       players: [],
       reservations: [],
+      collectedPickups: new Set(),
+      principalState: null,
     });
   }
 
@@ -381,6 +433,20 @@ function takeReservation(room, reservationId) {
 
   const [reservation] = room.reservations.splice(reservationIndex, 1);
   return reservation || null;
+}
+
+function createReservation(room, role) {
+  if (!room || !role) {
+    return null;
+  }
+
+  const reservationId = cryptoRandomId();
+  room.reservations.push({
+    id: reservationId,
+    role,
+    expiresAt: Date.now() + RESERVATION_TTL_MS,
+  });
+  return reservationId;
 }
 
 function cleanupRoom(room) {
